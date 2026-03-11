@@ -32,36 +32,6 @@ SKIP_FRAMES = 1
 FRAME_SEC = FRAME_SMP / SEND_SR
 
 
-def _patch_sphn():
-    if not hasattr(sphn.OpusStreamWriter, "read_bytes"):
-        for alt in ("get_bytes", "flush_bytes", "read_data"):
-            if hasattr(sphn.OpusStreamWriter, alt):
-                setattr(
-                    sphn.OpusStreamWriter,
-                    "read_bytes",
-                    getattr(sphn.OpusStreamWriter, alt),
-                )
-                break
-        else:
-            setattr(sphn.OpusStreamWriter, "read_bytes", lambda self: b"")
-    if not hasattr(sphn.OpusStreamReader, "read_pcm"):
-        for alt in ("get_pcm", "receive_pcm", "read_float"):
-            if hasattr(sphn.OpusStreamReader, alt):
-                setattr(
-                    sphn.OpusStreamReader,
-                    "read_pcm",
-                    getattr(sphn.OpusStreamReader, alt),
-                )
-                break
-        else:
-            setattr(
-                sphn.OpusStreamReader, "read_pcm", lambda self: np.empty(0, np.float32)
-            )
-
-
-_patch_sphn()
-
-
 def _mono(x: np.ndarray) -> np.ndarray:
     return x if x.ndim == 1 else x.mean(axis=1)
 
@@ -98,12 +68,12 @@ class MoshiFileClient:
             pkt0 = self.writer.append_pcm(frame.astype(np.float32) / 32768)
             if isinstance(pkt0, (bytes, bytearray)):
                 await ws.send(b"\x01" + pkt0)
-            queued = self.writer.read_bytes()
+            queued = self.writer.append_pcm(np.array([], dtype=np.float32))
             if queued:
                 await ws.send(b"\x01" + queued)
             await asyncio.sleep(FRAME_SEC)
 
-        queued = self.writer.read_bytes()
+        queued = self.writer.append_pcm(np.array([], dtype=np.float32))
         if queued:
             await ws.send(b"\x01" + queued)
         await asyncio.sleep(0.5)
@@ -124,9 +94,8 @@ class MoshiFileClient:
                     kind, payload = msg[0], msg[1:]
 
                     if kind == 1:  # audio bytes
-                        self.reader.append_bytes(payload)
+                        pcm = self.reader.append_bytes(payload)
                         while True:
-                            pcm = self.reader.read_pcm()
                             if pcm.size == 0:
                                 break
 
@@ -142,7 +111,7 @@ class MoshiFileClient:
                             n_write = min(pcm.size, remain)
                             fout.write((pcm[:n_write] * 32768).astype(np.int16))
                             samples_written += n_write
-
+                            pcm = self.reader.append_bytes(b"")
                     else:
                         print("[TEXT]", payload.decode(errors="ignore"))
 
@@ -185,7 +154,7 @@ def _input_files() -> List[Path]:
     files: List[Path] = []
     for t in tasks:
         pattern = root_dir_path / f"{t}/*/{prefix}input.wav"
-        files += [Path(p) for p in sorted(glob(pattern))]
+        files += [Path(p) for p in sorted(glob(str(pattern)))]
     return files
 
 
@@ -195,7 +164,40 @@ def _input_files() -> List[Path]:
 def main():
     ap = argparse.ArgumentParser("moshi_batch_client")
     ap.add_argument("--server_ip", required=True, help="host[:port] or http(s):// URL")
+
+    ap.add_argument(
+        "--root_dir",
+        type=Path,
+        required=True,
+        help="Root directory of the dataset",
+    )
+    ap.add_argument(
+        "--tasks",
+        nargs="+",
+        required=True,
+        help="List of tasks to process",
+    )
+    ap.add_argument(
+        "--prefix",
+        default=prefix,
+        help=f"Prefix for input wav files (default: '{prefix}')",
+    )
+    ap.add_argument(
+        "--overwrite",
+        action="store_false",
+        help="Whether to overwrite existing output files (default: True)",
+    )
+
     args = ap.parse_args()
+
+    # set args
+    global root_dir_path, tasks, prefix, overwrite
+    root_dir_path, tasks, prefix, overwrite = (
+        args.root_dir,
+        args.tasks,
+        args.prefix,
+        args.overwrite,
+    )
 
     url = _ws_url(args.server_ip)
     for inp in _input_files():
