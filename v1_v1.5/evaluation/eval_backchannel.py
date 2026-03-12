@@ -17,6 +17,8 @@ time_threshold = 3
 def eval_backchannel(data_dir):
 
     gt_distribution_path = "./icc_gt_distribution.json"
+    # resolve relative to this file
+    gt_distribution_path = os.path.join(os.path.dirname(__file__), gt_distribution_path)
     with open(gt_distribution_path, "r") as f:
         gt_distribution = json.load(f)
 

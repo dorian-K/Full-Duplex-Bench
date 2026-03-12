@@ -58,6 +58,7 @@ class MoshiFileClient:
         sig16, sr = sf.read(inp, dtype="int16")
         self.sig24 = _resample(_mono(sig16), sr, SEND_SR)
         self.max_samples = len(self.sig24)  # output 目標長度
+        self.samples_written = 0
 
         self.writer = sphn.OpusStreamWriter(SEND_SR)
         self.reader = sphn.OpusStreamReader(SEND_SR)
@@ -68,20 +69,23 @@ class MoshiFileClient:
             pkt0 = self.writer.append_pcm(frame.astype(np.float32) / 32768)
             if isinstance(pkt0, (bytes, bytearray)):
                 await ws.send(b"\x01" + pkt0)
+            else:
+                raise RuntimeError("Failed to encode frame")
             queued = self.writer.append_pcm(np.array([], dtype=np.float32))
             if queued:
                 await ws.send(b"\x01" + queued)
-            await asyncio.sleep(FRAME_SEC)
+            #await asyncio.sleep(FRAME_SEC)
 
         queued = self.writer.append_pcm(np.array([], dtype=np.float32))
         if queued:
             await ws.send(b"\x01" + queued)
-        await asyncio.sleep(0.5)
+        while self.samples_written < self.max_samples:
+            await asyncio.sleep(0.1)
         await ws.close()
 
     # ---------------- receiver ----------------
     async def _recv(self, ws):
-        samples_written = 0
+        self.samples_written = 0
         first_pcm_seen = False
 
         with sf.SoundFile(
@@ -102,15 +106,15 @@ class MoshiFileClient:
                             if not first_pcm_seen:
                                 pad = min(SKIP_FRAMES * FRAME_SMP, self.max_samples)
                                 fout.write(np.zeros(pad, dtype=np.int16))
-                                samples_written += pad
+                                self.samples_written += pad
                                 first_pcm_seen = True
 
-                            remain = self.max_samples - samples_written
+                            remain = self.max_samples - self.samples_written
                             if remain <= 0:
                                 continue
                             n_write = min(pcm.size, remain)
                             fout.write((pcm[:n_write] * 32768).astype(np.int16))
-                            samples_written += n_write
+                            self.samples_written += n_write
                             pcm = self.reader.append_bytes(b"")
                     else:
                         print("[TEXT]", payload.decode(errors="ignore"))
@@ -118,8 +122,8 @@ class MoshiFileClient:
             except wsex.ConnectionClosedError as e:
                 print("[WARN] recv closed:", e)
 
-            if samples_written < self.max_samples:
-                fout.write(np.zeros(self.max_samples - samples_written, dtype=np.int16))
+            if self.samples_written < self.max_samples:
+                fout.write(np.zeros(self.max_samples - self.samples_written, dtype=np.int16))
 
     async def _run(self):
         async with websockets.connect(self.url, max_size=None) as ws:
@@ -162,6 +166,7 @@ def _input_files() -> List[Path]:
 # CLI
 # ──────────────────────────────────────────────────────────────────────────────
 def main():
+    global root_dir_path, tasks, prefix, overwrite
     ap = argparse.ArgumentParser("moshi_batch_client")
     ap.add_argument("--server_ip", required=True, help="host[:port] or http(s):// URL")
 
@@ -191,7 +196,7 @@ def main():
     args = ap.parse_args()
 
     # set args
-    global root_dir_path, tasks, prefix, overwrite
+
     root_dir_path, tasks, prefix, overwrite = (
         args.root_dir,
         args.tasks,
