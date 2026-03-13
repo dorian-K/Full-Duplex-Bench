@@ -49,6 +49,7 @@ def eval_backchannel(data_dir):
         if not os.path.exists(json_file_name):
             print("The output.json file does not exist")
             backchannel_prediction = []
+            raise FileNotFoundError("Required file 'output.json' not found.")
 
         else:
             TOR = 0

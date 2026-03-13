@@ -1,5 +1,6 @@
 
 # Full-Duplex-Bench: A Benchmark Suite for Evaluating Full-Duplex Spoken Dialogue Models and Systems
+# *CHANGED* for our internal use!!!
 
 <div align="center">
   <img src="./fdb-logo.png" width="70%" alt="FDB Logo" />
