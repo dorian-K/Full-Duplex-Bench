@@ -97,7 +97,15 @@ def eval_user_interruption(root_dir, client):
             if len(segments_cw) == 0:
                 TOR = 0
             else:
-                output_start_time = segments_cw[0]["timestamp"][0]
+                post_interrupt_chunks = [
+                    seg for seg in segments_cw
+                    if seg["timestamp"][0] >= input_end_time
+                ]
+
+                if not post_interrupt_chunks:
+                    TOR = 0
+                else:
+                    output_start_time = post_interrupt_chunks[0]["timestamp"][0]
                 duration = (
                     segments_cw[-1]["timestamp"][-1] - segments_cw[0]["timestamp"][0]
                 )
